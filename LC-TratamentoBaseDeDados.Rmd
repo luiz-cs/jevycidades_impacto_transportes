@@ -1,0 +1,83 @@
+---
+title: "LC Transportes - Tratamento dos bancos de dados"
+output: html_notebook
+--- %>% %>% %>% %>% %>% 
+---
+
+```{r}
+library(dplyr)
+library(here)
+library(data.table)
+library(readxl)  
+library(tools)   # for file_path_sans_ext()
+
+```
+
+```{r}
+# Lendo arquivos CSV 
+csv_files <- list.files(here("Dados"), pattern = "\\.csv$", full.names = TRUE)
+
+csv_data <- lapply(csv_files, read.csv2, encoding = "latin1")
+
+names(csv_data) <- csv_files %>%
+  basename() %>%
+  file_path_sans_ext()
+
+# Read XLSX
+xlsx_files <- list.files(here("Dados"), pattern = "\\.xls$", full.names = TRUE)
+
+xlsx_data <- lapply(xlsx_files, read_excel)
+names(xlsx_data) <- xlsx_files %>%
+  basename() %>%
+  file_path_sans_ext()
+
+# Optional: Combine all into one list
+all_data <- c(csv_data, xlsx_data)
+
+#Removendo demais variáveis
+rm(csv_data, csv_files, xlsx_data, xlsx_files)
+```
+
+```{r}
+#Corrigir os arquivos csv:
+all_data <- lapply(all_data, function(df) {
+  if (ncol(df) == 1) {
+    raw_text <- df[[1]]
+    parsed_df <- read.csv(text = raw_text, header = TRUE, stringsAsFactors = FALSE)
+    return(parsed_df)
+  } else {
+    return(df)
+  }
+})
+```
+
+```{r}
+#Base dos municípios
+df <- all_data$RELATORIO_DTB_BRASIL_2024_MUNICIPIOS %>% 
+  data.table()
+
+#Ajustando a base
+header_df <- as.character(df[6, ])
+df <- df[7:nrow(df), ]
+colnames(df) <- header_df
+
+df <- df %>% 
+  select(`Código Município Completo`, Nome_Município, Nome_UF) %>% 
+  rename(i_CodIBGE = `Código Município Completo`)
+
+rm(header_df)
+```
+
+```{r}
+#Adicionando Anos
+df <- expand.grid(i_CodIBGE = df$i_CodIBGE,
+            Anos = c(2010:2024))%>% 
+  merge(df, by = "i_CodIBGE", all = T)
+
+```
+
+```{r}
+x1 <- all_data$`cidades com tarifa zero universal no Brasil - 2025 - vigentes`
+
+
+```
