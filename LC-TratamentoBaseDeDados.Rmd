@@ -1,10 +1,9 @@
 ---
 title: "LC Transportes - Tratamento dos bancos de dados"
 output: html_notebook
---- %>% %>% %>% %>% %>% 
 ---
 
-```{r}
+```{r, warning = FALSE}
 library(dplyr)
 library(here)
 library(data.table)
@@ -24,7 +23,7 @@ names(csv_data) <- csv_files %>%
   file_path_sans_ext()
 
 # Read XLSX
-xlsx_files <- list.files(here("Dados"), pattern = "\\.xls$", full.names = TRUE)
+xlsx_files <- list.files(here("Dados"), pattern = "\\.xls[x]?$", full.names = TRUE)
 
 xlsx_data <- lapply(xlsx_files, read_excel)
 names(xlsx_data) <- xlsx_files %>%
@@ -51,6 +50,8 @@ all_data <- lapply(all_data, function(df) {
 })
 ```
 
+## Base de Municípios e Anos
+
 ```{r}
 #Base dos municípios
 df <- all_data$RELATORIO_DTB_BRASIL_2024_MUNICIPIOS %>% 
@@ -63,21 +64,125 @@ colnames(df) <- header_df
 
 df <- df %>% 
   select(`Código Município Completo`, Nome_Município, Nome_UF) %>% 
-  rename(i_CodIBGE = `Código Município Completo`)
+  rename(i_CodIBGE = `Código Município Completo`, 
+         i2_Nome_Municipio = Nome_Município, 
+         i3_Nome_UF = Nome_UF)
+
+df <- expand.grid(
+  i_CodIBGE = unique(df$i_CodIBGE),
+  t_Ano = 2010:2024,
+  stringsAsFactors = FALSE
+) %>%
+  merge(df, by = "i_CodIBGE", all = TRUE) %>%
+  data.table(key = c("i_CodIBGE", "t_Ano"))
+
+df[,i_CodIBGE := as.numeric(i_CodIBGE)]
+
+
 
 rm(header_df)
 ```
 
+## X2: Tarifa Zero
+
 ```{r}
-#Adicionando Anos
-df <- expand.grid(i_CodIBGE = df$i_CodIBGE,
-            Anos = c(2010:2024))%>% 
-  merge(df, by = "i_CodIBGE", all = T)
+#Variável X2: Cidades com Tarifa Zero
+x2 <- all_data$`cidades com tarifa zero universal no Brasil - 2025` %>% 
+  data.table()
+
+#Alterando nome das colunas
+setnames(x2, c("Código IBGE", "Início", "Tipo"), 
+         c("i_CodIBGE", "x2t1_Ano_TZ", "x2t2_Tipo_TZ"))
+
+#Selecionando colunas de interesse:
+x2 <- x2[, .(i_CodIBGE, x2t1_Ano_TZ, x2t2_Tipo_TZ)]
+
+#Corrigindo coluna de ano de implementação
+x2[, x2t1_Ano_TZ := as.integer(x2t1_Ano_TZ)]
+
+#Juntando à df
+df <- merge(df, x2, by = "i_CodIBGE", all = T)
+
+#Adicionando coluna dummy para presença de Tarifa Zero:
+df <- df[, .(i_CodIBGE,
+       t_Ano, 
+       i2_Nome_Municipio,
+       i3_Nome_UF, 
+       x2_TarifaZero = fifelse(t_Ano < x2t1_Ano_TZ | is.na(x2t1_Ano_TZ), 0,1),
+       x2t_Tipo_TZ = fifelse(t_Ano < x2t1_Ano_TZ | is.na(x2t1_Ano_TZ), NA, x2t2_Tipo_TZ))]
+
+saveRDS(df, here("DadosTratados/df.RDS"))
+rm(x2)
+```
+
+## y1: Emissão de Gases de Efeito Estufa
+
+```{r}
+y1 <- read_excel(here("Dados/Dados municipais resumido - CO2e GWP-AR5 v12.0.xlsx"), sheet = "Dados") %>% 
+  data.table()
+
+#Selecionando colunsa de interesse
+y1 <-y1[, .(`Setor de emissão`, `ID Território`, `2010`, `2011`, `2012`, `2013`, `2014`, `2015`, `2016`, `2017`,`2018`, `2019`, `2020`, `2021`, `2022`, `2023`)]
+
+#Pivotando as colunas de Anos
+y1 <- melt(
+  y1,
+  id.vars = c("Setor de emissão", "ID Território"),
+  measure.vars = c("2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017","2018", "2019", "2020", "2021", "2022", "2023"),
+  variable.name = "t_Ano",
+  value.name = "y1_Emissoes_GEE"
+)
+
+
+#Sumarizando por grupos:
+y1 <- y1[, .(
+  y1_Emissoes_GEE = sum(y1_Emissoes_GEE, na.rm = TRUE)
+), by = .(`Setor de emissão`, `ID Território`, t_Ano)]
+
+saveRDS(y1, here("DadosTratados/y1.RDS"))
 
 ```
 
 ```{r}
-x1 <- all_data$`cidades com tarifa zero universal no Brasil - 2025 - vigentes`
 
+#y1 <- readRDS(here("DadosTratados/y1.RDS"))
+
+#Separando os tipos de emissão em diferentes colunas
+y1 <- dcast(y1,
+  `ID Território` + t_Ano ~ `Setor de emissão`,
+  value.var = "y1_Emissoes_GEE")
+y1[, i_CodIBGE := substr(as.character(i_CodIBGE), 2, nchar(as.character(i_CodIBGE)))]
+
+#Renomeando e ajustando o Código IBGE:
+y1 <- y1[, .("i_CodIBGE" = substr(as.character(`ID Território`), 2, nchar(as.character(`ID Território`))),
+       t_Ano, 
+       "y1_1EGEE_Agropecuaria" = Agropecuária, 
+       "y1_2EGEE_Energia" = Energia, 
+       "y1_3EGEE_Uso_da_Terra" = `Mudança de Uso da Terra e Floresta`, 
+       "y1_4EGEE_Industria" = `Processos Industriais`, 
+       "y1_5EGEE_Residuos" = Resíduos)]
+
+#Substituindo NA por 0
+y1 <- y1[, lapply(.SD, function(x) ifelse(is.na(x), 0, x)), keyby = c("i_CodIBGE", "t_Ano")]
+
+#Criando coluna com total de emissões
+y1[, "y1_EmissoesTotais_GEE" := sum(y1_1EGEE_Agropecuaria, y1_2EGEE_Energia, y1_3EGEE_Uso_da_Terra, y1_4EGEE_Industria, y1_5EGEE_Residuos), by = c("i_CodIBGE", "t_Ano")]
+
+y1[, t_Ano := as.numeric(as.character(t_Ano))]
+y1[, i_CodIBGE := as.numeric(as.character(i_CodIBGE))]
+
+#Juntando à base original
+df <- readRDS(here("DadosTratados/df.RDS"))
+df <- merge(df, y1, by = c("i_CodIBGE", "t_Ano"), all =T)
+
+#Removendo valores que não correspondem a nenhum município
+df <- df[!is.na(i2_Nome_Municipio)]
+
+#Salvando a base atualizada
+saveRDS(df, here("DadosTratados/df.RDS"))
+saveRDS(y1, here("DadosTratados/y1.RDS"))
+
+#Removendo a base y1
+rm(y1)
 
 ```
