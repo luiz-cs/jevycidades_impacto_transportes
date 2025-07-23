@@ -1,5 +1,5 @@
 ---
-title: "Lc Transportes - Tratamento dos bancos de dados"
+title: "Jc Transportes - Tratamento dos bancos de dados"
 output: html_notebook
 ---
 
@@ -156,7 +156,7 @@ df <- merge(df, x2, by = "i_CodIBGE", all = T)
 #Adicionando coluna dummy para presença de Tarifa Zero:
 df <- df[, x2_TarifaZero := fifelse(t_Ano < x2t1_Ano_TZ | is.na(x2t1_Ano_TZ), 0,1)]
 
-saveRDS(df, here("DadosTratados/df.RDS"))
+
 rm(x2)
 ```
 
@@ -242,7 +242,7 @@ df <- merge(df, y1, by = c("i_CodIBGE", "t_Ano"), all.x =T)
 
 
 #Salvando a base atualizada
-saveRDS(df, here("DadosTratados/df.RDS"))
+
 saveRDS(y1, here("DadosTratados/y1.RDS"))
 
 #Removendo a base y1
@@ -282,7 +282,6 @@ y2 <- dcast(
 ## y2: PIB per capita
 
 ```{r}
-df <- readRDS(here("DadosTratados/df.RDS"))
 
 #Levantando a base
 y2 <- read.csv(here("Dados/br_ibge_pib_municipio.csv"))
@@ -303,15 +302,14 @@ y2 <- y2 %>%
 
 df <- merge(df, y2, by = c("i_CodIBGE", "t_Ano"), all.x = T)
 
-saveRDS(df, here("DadosTratados/df.RDS"))
+rm(y2)
+
 ```
 
 # Variáveis de Controle
 ## z1: População
 ```{r}
 #Levantando a base
-
-df <- readRDS(here("DadosTratados/df.RDS"))
 
 z1_1 <- read_xlsx(here("Dados/tabela4709.xlsx"), skip = 2) %>% 
   data.table()
@@ -355,14 +353,179 @@ rm(z1, z1_1, z1_2)
 ```{r}
 df[, y3_PIBperCap := y3_1PIBtotal / z1_Populacao]
 
-saveRDS(df, here("DadosTratados/df.RDS"))
 ```
 
 ## z2: Área e Densidade Populacional
 ```{r}
-z2 <- 
+
+# Lendo arquivos:
+area_files <- list.files(here("Dados/IBGE_Area_Municipios/"), pattern = "\\.xls[x]?$", full.names = TRUE)
+
+area_data <- lapply(area_files, read_excel)
+#Adicionando nomes
+names(area_data) <- area_files %>%
+  basename() %>%
+  file_path_sans_ext()
+
+
 ```
 
+```{r}
+#Limpando manualmente
+#2010
+z2 <- area_data$Areas_MU_UF_RE_BR %>% 
+  data.table()
+
+z2 <- z2[, .(i_CodIBGE = as.numeric(GEOCODIGO),
+          t_Ano = 2010,
+          z2_1AreaMun = as.numeric(AR_MUN_2010))]
+
+#2013
+z2_ano <- area_data$Areas_BR_RG_UF_MUN_2013 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GEOCODIGO),
+          t_Ano = 2013,
+          z2_1AreaMun = as.numeric(AREA_2013_KM2))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2014
+z2_ano <- area_data$Areas_MU_UF_RE_BR_2014 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GCMUN),
+          t_Ano = 2014,
+          z2_1AreaMun = as.numeric(AR_MUN_2014))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2015
+
+z2_ano <- area_data$AR_BR_RG_UF_MUN_2015 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GCMUN),
+          t_Ano = 2015,
+          z2_1AreaMun = as.numeric(AR_MUN_2015))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+
+#2016
+
+z2_ano <- area_data$AR_BR_RG_UF_MUN_2016 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GCMUN),
+          t_Ano = 2016,
+          z2_1AreaMun = as.numeric(AR_MUN_2016))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2017
+
+z2_ano <- area_data$AR_BR_RG_UF_MES_MIC_MUN_2017 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GCMUN),
+          t_Ano = 2017,
+          z2_1AreaMun = as.numeric(AR_MUN_2017))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+
+#2018
+
+z2_ano <- area_data$AR_BR_RG_UF_MES_MIC_MUN_2018 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GCMUN),
+          t_Ano = 2018,
+          z2_1AreaMun = as.numeric(AR_MUN_2018))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2019
+
+z2_ano <- area_data$AR_BR_RG_UF_RGINT_RGIM_MES_MIC_MUN_2019 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GCMUN),
+          t_Ano = 2019,
+          z2_1AreaMun = as.numeric(AR_MUN_2019))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2020
+
+z2_ano <- area_data$AR_BR_RG_UF_RGINT_RGIM_MES_MIC_MUN_2020 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_GCMUN),
+          t_Ano = 2020,
+          z2_1AreaMun = as.numeric(AR_MUN_2020))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2021
+
+z2_ano <- area_data$AR_BR_RG_UF_RGINT_RGIM_MES_MIC_MUN_2021 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_MUN),
+          t_Ano = 2021,
+          z2_1AreaMun = as.numeric(AR_MUN_2021))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2022
+
+z2_ano <- area_data$AR_BR_RG_UF_RGINT_MES_MIC_MUN_2022 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_MUN),
+          t_Ano = 2022,
+          z2_1AreaMun = as.numeric(AR_MUN_2022))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2023
+
+z2_ano <- area_data$AR_BR_RG_UF_RGINT_RGI_MUN_2023 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_MUN),
+          t_Ano = 2023,
+          z2_1AreaMun = as.numeric(AR_MUN_2023))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+#2024
+
+z2_ano <- area_data$AR_BR_RG_UF_RGINT_RGI_MUN_2024 %>% 
+  data.table()
+
+z2_ano <- z2_ano[, .(i_CodIBGE = as.numeric(CD_MUN),
+          t_Ano = 2024,
+          z2_1AreaMun = as.numeric(AR_MUN_2024))]
+
+z2 <- bind_rows(z2, z2_ano)
+
+rm(z2_ano, area_data, area_files)
+
+```
+
+```{r}
+#Juntando à base principal
+
+df <- merge(df, z2, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+df[ , z2_2DensidadeDemografica := z1_Populacao / z2_1AreaMun]
+
+
+rm(z2)
+```
 
 # Reordenando colunas
 ```{r}
@@ -379,6 +542,9 @@ demais_cols <- setdiff(names(df), xyz_cols)
 setcolorder(df, c(demais_cols, xyz_cols))
 
 rm(xyz_cols, demais_cols)
+
+saveRDS(df, here("DadosTratados/df.RDS"))
+
 
 ```
 
