@@ -1,5 +1,5 @@
 ---
-title: "LC Transportes - Tratamento dos bancos de dados"
+title: "Lc Transportes - Tratamento dos bancos de dados"
 output: html_notebook
 ---
 
@@ -8,8 +8,7 @@ library(dplyr)
 library(here)
 library(data.table)
 library(readxl)  
-library(tools)   # for file_path_sans_ext()
-
+library(tools)   
 ```
 
 ```{r, warning = FALSE}
@@ -82,7 +81,9 @@ df[,i_CodIBGE := as.numeric(i_CodIBGE)]
 rm(header_df)
 ```
 
-## X1: Municípios com Transporte Público Intramunicipal
+# Variáveis explicativas
+
+## x1: Municípios com Transporte Público Intramunicipal
 
 ```{r}
 #Levantando a base
@@ -128,7 +129,7 @@ df <- merge(df, x1, by = c("i_CodIBGE", "t_Ano", "UF", "Regiao", "Faixa_pop"), a
 rm(x1_cols, info_munic, x1)
 ```
 
-## X2: Tarifa Zero
+## x2: Tarifa Zero
 
 ```{r}
 #Variável X2: Cidades com Tarifa Zero
@@ -158,6 +159,8 @@ df <- df[, x2_TarifaZero := fifelse(t_Ano < x2t1_Ano_TZ | is.na(x2t1_Ano_TZ), 0,
 saveRDS(df, here("DadosTratados/df.RDS"))
 rm(x2)
 ```
+
+# Variáveis Resposta
 
 ## y1: Emissão de Gases de Efeito Estufa
 
@@ -247,8 +250,135 @@ rm(y1)
 
 ```
 
-## Y2: Qualidade do ar:
+## yZ: Qualidade do ar:
 
 ```{r}
-y2 <- all_data$`Dados_monitorar_abr_jun_22-11-2022 DQAA`
+
+#Juntando as bases
+'y2_1 <- all_data$`Dados_monitorar_jan_mar_22-11-2022 DQAA`
+y2_2 <- all_data$`Dados_monitorar_abr_jun_22-11-2022 DQAA`
+y2_3 <- all_data$`Dados_monitorar_jul_nov_22-11-2022 DQAA`
+
+y2 <- bind_rows(y2_1, y2_2) %>% 
+  bind_rows(y2_3) %>% 
+  data.table()
+
+rm(y2_1, y2_2, y2_3)'
 ```
+
+```{r}
+'length(unique(y2$Nome.do.Município))
+#Limpando os dados: 
+y2 <- y2[, .(Nome.do.Município, Estado, Sigla, , Data, Hora)]
+
+y2 <- dcast(
+  y2,
+  Nome.do.Município + Estado + Data + Hora ~ Sigla,
+  value.var = "iqar",
+  sep = "_iqar")
+'
+```
+
+## y2: PIB per capita
+
+```{r}
+df <- readRDS(here("DadosTratados/df.RDS"))
+
+#Levantando a base
+y2 <- read.csv(here("Dados/br_ibge_pib_municipio.csv"))
+
+names(y2)
+y2 <- y2 %>% 
+  rename(i_CodIBGE = id_municipio,
+    t_Ano = ano,
+    y3_1PIBtotal = pib,
+    y3_21VA_Total = va,
+    y3_22VA_Agro = va_agropecuaria,
+    y3_23VA_Industria = va_industria, 
+    y3_24VA_Servicos = va_servicos,
+    y3_25VA_SetorPublico = va_adespss, 
+    y3_3impostos_liquidos = impostos_liquidos) %>% 
+  data.table()
+
+
+df <- merge(df, y2, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+saveRDS(df, here("DadosTratados/df.RDS"))
+```
+
+# Variáveis de Controle
+## z1: População
+```{r}
+#Levantando a base
+
+df <- readRDS(here("DadosTratados/df.RDS"))
+
+z1_1 <- read_xlsx(here("Dados/tabela4709.xlsx"), skip = 2) %>% 
+  data.table()
+
+z1_2 <- read_xlsx(here("Dados/tabela6579.xlsx"), skip = 2) %>%
+  data.table()
+
+#Renomeando colunas de z1_2:
+z1_2 <- z1_2[, .(i_CodIBGE = as.numeric(`Cód.`),
+         "2013" = Ano,
+         "2014" = ...5, 
+         "2015" = ...6, 
+         "2016" = ...7,
+         "2017" = ...8,
+         "2018" = ...9, 
+         "2019" = ...10, 
+         "2020" = ...11, 
+         "2021" = ...12, 
+         "2024" = ...13)]
+
+#Pivot_longer dos anos
+z1_2 <- melt(z1_2, id.vars = "i_CodIBGE", variable.name = "t_Ano", value.name = "z1_Populacao")
+
+z1_2[, t_Ano := as.numeric(as.character(t_Ano))]
+
+#Tratando z1_1:
+z1_1 <- z1_1[, .(i_CodIBGE = as.numeric(`Cód.`),
+         "z1_Populacao" = Ano,
+         "t_Ano" = 2022)]
+
+z1 <- bind_rows(z1_1, z1_2)
+
+df <- merge(df, z1, by = c("i_CodIBGE", "t_Ano"), all.x = T) 
+
+df[, z1_Populacao := as.numeric(z1_Populacao)]
+
+rm(z1, z1_1, z1_2)
+```
+
+### Adicionando o PIB per capita:
+```{r}
+df[, y3_PIBperCap := y3_1PIBtotal / z1_Populacao]
+
+saveRDS(df, here("DadosTratados/df.RDS"))
+```
+
+## z2: Área e Densidade Populacional
+```{r}
+z2 <- 
+```
+
+
+# Reordenando colunas
+```{r}
+# Identificando colunas das variáveis
+xyz_cols <- grep("^[xyz]", names(df), value = TRUE)
+
+# Ordenando colunas alfabeticamente
+xyz_cols <- sort(xyz_cols)
+
+# Selecionando outras colunas
+demais_cols <- setdiff(names(df), xyz_cols)
+
+# Reorderando as colunas
+setcolorder(df, c(demais_cols, xyz_cols))
+
+rm(xyz_cols, demais_cols)
+
+```
+
