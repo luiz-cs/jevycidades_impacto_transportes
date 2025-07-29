@@ -9,6 +9,10 @@ library(here)
 library(data.table)
 library(readxl)  
 library(tools)   
+library(httr)
+library(jsonlite)
+library(bigrquery)
+library(basedosdados)
 ```
 
 ```{r, warning = FALSE}
@@ -250,35 +254,6 @@ rm(y1)
 
 ```
 
-## yZ: Qualidade do ar:
-
-```{r}
-
-#Juntando as bases
-'y2_1 <- all_data$`Dados_monitorar_jan_mar_22-11-2022 DQAA`
-y2_2 <- all_data$`Dados_monitorar_abr_jun_22-11-2022 DQAA`
-y2_3 <- all_data$`Dados_monitorar_jul_nov_22-11-2022 DQAA`
-
-y2 <- bind_rows(y2_1, y2_2) %>% 
-  bind_rows(y2_3) %>% 
-  data.table()
-
-rm(y2_1, y2_2, y2_3)'
-```
-
-```{r}
-'length(unique(y2$Nome.do.Município))
-#Limpando os dados: 
-y2 <- y2[, .(Nome.do.Município, Estado, Sigla, , Data, Hora)]
-
-y2 <- dcast(
-  y2,
-  Nome.do.Município + Estado + Data + Hora ~ Sigla,
-  value.var = "iqar",
-  sep = "_iqar")
-'
-```
-
 ## y2: PIB per capita
 
 ```{r}
@@ -290,13 +265,13 @@ names(y2)
 y2 <- y2 %>% 
   rename(i_CodIBGE = id_municipio,
     t_Ano = ano,
-    y3_1PIBtotal = pib,
-    y3_21VA_Total = va,
-    y3_22VA_Agro = va_agropecuaria,
-    y3_23VA_Industria = va_industria, 
-    y3_24VA_Servicos = va_servicos,
-    y3_25VA_SetorPublico = va_adespss, 
-    y3_3impostos_liquidos = impostos_liquidos) %>% 
+    y2_1PIBtotal = pib,
+    y2_21VA_Total = va,
+    y2_22VA_Agro = va_agropecuaria,
+    y2_23VA_Industria = va_industria, 
+    y2_24VA_Servicos = va_servicos,
+    y2_25VA_SetorPublico = va_adespss, 
+    y2_3impostos_liquidos = impostos_liquidos) %>% 
   data.table()
 
 
@@ -306,8 +281,197 @@ rm(y2)
 
 ```
 
+## y3: Volume de vendas por PIX:
+
+```{r}
+#Criando função para obter dados do PIX por município
+coletar_pix <- function(munic) {
+  url <- paste0("https://olinda.bcb.gov.br/olinda/servico/Pix_DadosAbertos/versao/v1/odata/TransacoesPixPorMunicipio(DataBase=@DataBase)?@DataBase='202101'&$top=50&$filter=Municipio_Ibge%20eq%20", 
+  munic, 
+  "&$format=json&$select=AnoMes,Municipio_Ibge,VL_PagadorPF,QT_PagadorPF,VL_PagadorPJ,QT_PagadorPJ,VL_RecebedorPF,QT_RecebedorPF,VL_RecebedorPJ,QT_RecebedorPJ")
+  
+  resp <- httr::GET(url)
+  stop_for_status(resp)
+  
+  dados <- content(resp, as = "text", encoding = "UTF-8")
+  lis <- fromJSON(dados, flatten = TRUE)
+  
+  dt <- as.data.table(lis$value)
+
+  return(dt[])
+}
+
+```
+
+```{r}
+#Rodando função para coletar dados de transações do PIX:
+codibge <- unique(df$i_CodIBGE)
+
+lista_pix <- list()
+i_processados <- list()
+                     
+#Fazendo loop para pegar informações de cada município:
+
+for (i in seq_along(codibge)) {
+  munic <- codibge[i]
+
+  # Pula se já processado
+  if (munic %in% i_processados) {
+    message("⏭️ Já processado: ", munic)
+    next
+  }
+
+  message("🔄 Coletando: ", munic)
+
+  # Coleta com tratamento de erro
+  resultado <- tryCatch({
+    coletar_pix(munic)
+  }, error = function(e) {
+    message("❌ Erro com ", munic, ": ", conditionMessage(e))
+    return(NULL)
+  })
+
+  # Se obteve resultado, salva na lista
+  if (!is.null(resultado)) {
+    lista_pix[[as.character(munic)]] <- resultado
+    message("✔️ Sucesso: ", munic)
+
+    # Atualiza vetor de processados
+    i_processados <- c(i_processados, munic)}
+  saveRDS(lista_pix, here("DadosTratados/lista_pix.RDS"))
+  saveRDS(i_processados, here("DadosTratados/i_processados.RDS"))
+
+}
+
+
+# Unindo todos os data.tables do pix
+pix <- rbindlist(lista_pix)
+
+saveRDS(pix, here("DadosTratados/pix.RDS"))
+
+
+rm(codibge, coletar_pix, i, i_processados, munic, resultado, lista_pix)
+```
+
+```{r}
+
+pix <- readRDS(here("DadosTratados/pix.RDS"))
+
+#Sumarizando os resultados por município e ano
+##Código: Pagador/Recebedor - PF/PJ - Valor/Quantidade 
+pix <- pix[, `:=`(i_CodIBGE = as.numeric(Municipio_Ibge),
+        t_Ano = as.numeric(substr(AnoMes, 1, 4)))]
+
+pix <- pix[, .(
+        y3_111Pix_VL_PagadorPF = sum(VL_PagadorPF, na.rm = TRUE), 
+        y3_112Pix_QT_PagadorPF = sum(QT_PagadorPF, na.rm = TRUE),
+        y3_121Pix_VL_PagadorPJ = sum(VL_PagadorPJ, na.rm = TRUE),
+        y3_122Pix_QT_PagadorPJ = sum(QT_PagadorPJ, na.rm = TRUE),
+        y3_211Pix_VL_RecebedorPF = sum(VL_RecebedorPF, na.rm = TRUE),
+        y3_212Pix_QT_RecebedorPF = sum(QT_RecebedorPF, na.rm = TRUE),
+        y3_221Pix_VL_RecebedorPJ = sum(VL_RecebedorPJ, na.rm = TRUE),
+        y3_222Pix_QT_RecebedorPJ = sum(QT_RecebedorPJ, na.rm = TRUE)),
+    by = .(i_CodIBGE, t_Ano)]
+  
+#Juntando à base df:
+setkey(df, i_CodIBGE, t_Ano)
+setkey(pix, i_CodIBGE, t_Ano)
+
+df <- merge(df, pix, by = c("i_CodIBGE", "t_Ano"), all.x = TRUE)
+
+# Removendo a lista de pix e o objeto df
+rm(pix)
+```
+
+## y4: Volume de ISS
+
+```{r}
+
+```
+
+## y5: Número de estabelecimentos registrados no município
+
+```{r}
+# 1. Defina o projeto no Google Cloud
+set_billing_id("jevy-cidades")  # <- seu ID de projeto
+
+# 2. Escreva a query desejada
+query <- "
+WITH 
+dicionario_natureza_estabelecimento AS (
+    SELECT
+        chave AS chave_natureza_estabelecimento,
+        valor AS descricao_natureza_estabelecimento
+    FROM `basedosdados.br_me_rais.dicionario`
+    WHERE
+        nome_coluna = 'natureza_estabelecimento'
+        AND id_tabela = 'microdados_estabelecimentos'
+)
+
+SELECT
+    dados.ano AS ano,
+    dados.id_municipio AS id_municipio,
+    diretorio_id_municipio.nome AS municipio_nome,
+    dados.quantidade_vinculos_ativos AS quantidade_vinculos_ativos,
+    descricao_natureza_estabelecimento AS natureza_estabelecimento
+
+FROM `basedosdados.br_me_rais.microdados_estabelecimentos` AS dados
+
+LEFT JOIN (
+    SELECT DISTINCT id_municipio, nome  
+    FROM `basedosdados.br_bd_diretorios_brasil.municipio`
+) AS diretorio_id_municipio
+    ON dados.id_municipio = diretorio_id_municipio.id_municipio
+
+LEFT JOIN dicionario_natureza_estabelecimento
+    ON dados.natureza_estabelecimento = chave_natureza_estabelecimento
+"
+
+# 3. Rodar a query e carregar dados
+RAIS <- read_sql(query, billing_project_id = get_billing_id())
+
+setDT(RAIS)
+saveRDS(RAIS, here("DadosTratados/RAIS.RDS"))
+
+rm(query)
+```
+
+```{r}
+
+RAIS <- RAIS[ano >= 2005]
+
+#Verificando número de estabelecimentos
+y5 <- RAIS[, .(y5_RAIS_N_Estabelecimentos = .N), by = .(i_CodIBGE = id_municipio, t_Ano = ano)]
+
+y5 <- y5[, .(i_CodIBGE = as.numeric(i_CodIBGE), 
+             t_Ano = as.numeric(t_Ano), 
+             y5_RAIS_N_Estabelecimentos)]
+
+df <- merge(df, y5, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+rm(y5)
+```
+
+## y6: Percentual de empregados formais
+
+```{r}
+#Número de Vínculos Ativos na RAIS
+y6 <- RAIS[, .(y6_RAIS_N_Vinculos = sum(quantidade_vinculos_ativos)), by = .(i_CodIBGE = id_municipio, t_Ano = ano)]
+
+y6 <- y6[, .(i_CodIBGE = as.numeric(i_CodIBGE), 
+             t_Ano = as.numeric(t_Ano), 
+             y6_RAIS_N_Vinculos)]
+
+df <- merge(df, y6, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+rm(y6, RAIS)
+
+```
+
 # Variáveis de Controle
+
 ## z1: População
+
 ```{r}
 #Levantando a base
 
@@ -350,12 +514,14 @@ rm(z1, z1_1, z1_2)
 ```
 
 ### Adicionando o PIB per capita:
+
 ```{r}
 df[, y3_PIBperCap := y3_1PIBtotal / z1_Populacao]
 
 ```
 
 ## z2: Área e Densidade Populacional
+
 ```{r}
 
 # Lendo arquivos:
@@ -525,9 +691,179 @@ df[ , z2_2DensidadeDemografica := z1_Populacao / z2_1AreaMun]
 
 
 rm(z2)
+
+```
+
+## z3: Frota de Veículos per Capita
+
+```{r}
+
+# Defina o seu projeto no Google Cloud
+set_billing_id("jevy-cidades")
+
+# Para carregar o dado direto no R
+query <- "
+SELECT
+    dados.ano as ano,
+    dados.id_municipio AS id_municipio,
+    diretorio_id_municipio.nome AS id_municipio_nome,
+    dados.tipo_veiculo as tipo_veiculo,
+    dados.quantidade as quantidade
+FROM `basedosdados.br_denatran_frota.municipio_tipo` AS dados
+LEFT JOIN (SELECT DISTINCT id_municipio,nome  FROM `basedosdados.br_bd_diretorios_brasil.municipio`) AS diretorio_id_municipio
+    ON dados.id_municipio = diretorio_id_municipio.id_municipio"
+
+z3 <- read_sql(query, billing_project_id = get_billing_id())
+setDT(z3)
+
+unique(z3$tipo_veiculo)
+```
+
+```{r}
+
+#Juntando categorias de veículos
+z3 <- z3[, z3_tipo_veiculo := fcase(
+  tipo_veiculo %in% c("automovel"), "automovel",
+  tipo_veiculo %in% c("motocicleta"), "moto",
+  tipo_veiculo %in% c("onibus", "micro-onibus"), "onibus",
+  default = "outros")]
+
+z3 <- dcast(z3,
+  ... ~ z3_tipo_veiculo,
+  value.var = "quantidade",
+  fun.aggregate = sum,
+  fill = 0)
+
+
+z3 <- z3[, .(z3_1N_Automovel = sum(automovel), z3_2N_Moto = sum(moto),
+              z3_3N_Onibus = sum(onibus), z3_4N_Outros = sum(outros)), 
+          by = c(i_CodIBGE = "id_municipio", t_Ano = "ano")]
+
+z3 <- z3[, i_CodIBGE := as.numeric(i_CodIBGE)]
+
+#Juntando à base df:
+df <- merge(df, z3, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+rm(z3, query)
+```
+
+## z4: Venda de combustíveis fósseis para os municípios
+
+```{r}
+#Etanol
+z4 <- all_data$`vendas-anuais-de-etanol-hidratado-por-municipio` %>% 
+  data.table()
+
+z4 <- z4[, .(i_CodIBGE = CÃ.DIGO.IBGE,
+         t_Ano = ANO,
+         z4_1Etanol = VENDAS)]
+
+#Gasolina C
+z4_t <- all_data$`vendas-anuais-de-gasolina-c-por-municipio` %>% 
+  data.table()
+
+z4_t <- z4_t[, .(i_CodIBGE = CÃ.DIGO.IBGE,
+         t_Ano = ANO,
+         z4_2GasolinaC = VENDAS)]
+
+z4 <- merge(z4, z4_t, by = c("i_CodIBGE", "t_Ano"), all = T)
+
+#GLP
+z4_t <- all_data$`vendas-anuais-de-glp-por-municipio` %>% 
+  data.table()
+
+z4_t <- z4_t[, .(i_CodIBGE = CÃ.DIGO.IBGE,
+         t_Ano = ANO,
+         z4_31GLP_P13 = P13, 
+         z4_32GLP_Outros = OUTROS)]
+
+z4 <- merge(z4, z4_t, by = c("i_CodIBGE", "t_Ano"), all = T)
+
+#Óleo Combustível
+z4_t <- all_data$`vendas-anuais-de-oleo-combustivel-por-municipio`%>% 
+  data.table()
+
+z4_t <- z4_t[, .(i_CodIBGE = CÃ.DIGO.IBGE,
+         t_Ano = ANO,
+         z4_4Oleo_Combustivel = VENDAS)]
+
+z4 <- merge(z4, z4_t, by = c("i_CodIBGE", "t_Ano"), all = T)
+
+#Óleo Disel
+z4_t <- all_data$`vendas-anuais-de-oleo-diesel-por-municipio`%>% 
+  data.table()
+
+z4_t <- z4_t[, .(i_CodIBGE = CÃ.DIGO.IBGE,
+         t_Ano = ANO,
+         z4_5Diesel = VENDAS)]
+
+z4 <- merge(z4, z4_t, by = c("i_CodIBGE", "t_Ano"), all = T)
+
+#Juntando à df:
+
+df <- merge(df, z4, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+rm(z4, z4_t)
+
+```
+
+## z5: Fuzzy de Área Urbana, Rural e Natural
+
+```{r}
+z5 <- all_data$BD11_Id_Geocodigos_Nome_Tipo %>% 
+  data.table()
+
+z5 <- z5[, .(i_CodIBGE = Cod_Mun,
+             t_Ano = 2023,
+             z5_1Area_Urbana = `FZZ_URB_%`, 
+             z5_2Area_Rural = `FZZ_RUR_%`,
+             z5_3Area_Natural = `FZZ_NAT_%`)]
+
+df <- merge(df, z5, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+rm(z5)
+```
+
+## z6: Índice de Desenvolvimento Sustentável das Cidades
+
+```{r}
+#Dados de 2022
+z6 <- read_xlsx(here("Dados/Base_de_Dados_IDSC-BR_2022.xlsx"), sheet = "Todos os Dados") %>% 
+  data.table()
+
+z6 <- z6[, .(i_CodIBGE = id,
+       t_Ano = 2022,
+       z6_IDSC = `Pontuação IDSC-BR`)]
+
+#Dados de 2023
+z6_23 <- read_xlsx(here("Dados/Base_de_Dados_IDSC-BR_2023.xlsx"), sheet = "Todos os Dados") %>% 
+  data.table()
+
+z6_23 <- z6_23[, .(i_CodIBGE = id,
+       t_Ano = 2023,
+       z6_IDSC = `Pontuação Indice ODS 2023`)]
+
+z6 <- bind_rows(z6, z6_23)
+
+#Dados de 2024
+z6_24 <- read_xlsx(here("Dados/Base_de_Dados_IDSC-BR_2024.xlsx"), sheet = "IDSC-BR 2024") %>% 
+  data.table()
+
+z6_24 <- z6_24[, .(i_CodIBGE = COD_MUN,
+       t_Ano = 2024,
+       z6_IDSC = `IDSC-BR 2024`)]
+
+z6 <- bind_rows(z6, z6_24)
+
+#Adicionando à base df:
+
+df <- merge(df, z6, by = c("i_CodIBGE", "t_Ano"), all.x = T)
+
+rm(z6, z6_23, z6_24)
 ```
 
 # Reordenando colunas
+
 ```{r}
 # Identificando colunas das variáveis
 xyz_cols <- grep("^[xyz]", names(df), value = TRUE)
@@ -547,4 +883,3 @@ saveRDS(df, here("DadosTratados/df.RDS"))
 
 
 ```
-
